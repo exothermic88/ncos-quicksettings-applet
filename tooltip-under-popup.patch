@@ -1,0 +1,57 @@
+diff --git a/src/app.rs b/src/app.rs
+index 6958f16..5bf6cd2 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -179,6 +179,9 @@ pub enum Message {
+     ScrollVolume(f32),
+     ScrollBrightness(f32),
+     Surface(cosmic::surface::Action),
++    /// A tooltip's delayed popup, dropped if the popup opened meanwhile:
++    /// showing it then would close the popup.
++    TooltipReady(cosmic::surface::Action),
+     Suspend,
+     Restart,
+     LogOut,
+@@ -587,7 +590,11 @@ impl cosmic::Application for App {
+                 let id = window::Id::unique();
+                 self.popup = Some(id);
+                 self.page = Some(Page::Main);
+-                return cosmic::surface::surface_task(cosmic::surface::action::app_popup(
++                // A tooltip already up goes, under the popup.
++                let hide_tooltip = cosmic::task::message(cosmic::Action::Cosmic(
++                    cosmic::app::Action::Surface(cosmic::surface::Action::DestroyTooltipPopup),
++                ));
++                let open = cosmic::surface::surface_task(cosmic::surface::action::app_popup(
+                     |_: &Self| Default::default(),
+                     move |app: &mut Self| {
+                         let mut settings =
+@@ -602,6 +609,7 @@ impl cosmic::Application for App {
+                     },
+                     None,
+                 ));
++                return Task::batch([hide_tooltip, open]);
+             }
+             Message::Preview(page) => {
+                 let open = self.update(Message::TogglePopup);
+@@ -1348,9 +1356,21 @@ impl cosmic::Application for App {
+                     return self.update(Message::SetBrightness(percent));
+                 }
+             }
++            // A tooltip waits a moment before showing, and only checks then
++            // that the cursor is still on it: run its wait here, to check
++            // too that the popup didn't open in that moment.
++            Message::Surface(cosmic::surface::Action::Task(f)) => {
++                return f().map(|action| cosmic::Action::App(Message::TooltipReady(action)));
++            }
+             Message::Surface(action) => {
+                 return cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)));
+             }
++            Message::TooltipReady(action) => {
++                if self.popup.is_some() && matches!(action, cosmic::surface::Action::Popup(..)) {
++                    return Task::none();
++                }
++                return cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)));
++            }
+             Message::None => {}
+         }
+         Task::none()
